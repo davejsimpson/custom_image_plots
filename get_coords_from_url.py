@@ -5,8 +5,7 @@ from PIL import Image
 import urllib
 from io import BytesIO
 from random import choice
-
-
+import cv2
 
 
 def read_array_from_image_url(url):
@@ -30,25 +29,56 @@ def read_array_from_image_url(url):
     return R
     
 
-def select_pixels(image_array, threshold = 0):
+def select_dark_pixels(image_array, threshold = None, ratio = None):
     '''
-    Extract the black pixels from an array
+    Extract the black pixels from an array. Either take the % darkest pixels, or those darker than a threshold
 
     Parameters: 
         image_array (numpy array) - pixels from image
-        threshold (float) - threshold below which to count as a black pixel
+        threshold (float) - threshold below which to count as a black pixel. If None - will try and use ratio
+        ratio (float) - ratio of darkest points to take. If None - will try and use threshold
 
     Returns: 
-        coords (list) - list of coordinates of 'black' pixels
+        coords (numpy array: shape (n,2) - coordinates of 'black' pixels
     '''
 
-    coords = []
-    for row in range(len(image_array)):
-        for pix in range(len(image_array[row])):  
-            if (image_array[row][pix][:2] == threshold).all():
-                coords.append((pix,-row))
-    coords.sort(key = lambda x:x[1])
+    #convert to grayscale
+    grsc = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+
+    if ratio:
+        number_darkest = int(len(image_array.ravel())*ratio)
+        dark_i = np.unravel_index(grsc.ravel().argsort()[::-1][-number_darkest:], grsc.shape)
+
+    elif threshold:
+        #take pixels which are darker than the threshold
+        dark_i = np.where(grsc<threshold)
+        
+    else:
+        return None
+
+    coords = np.column_stack((dark_i[1], -dark_i[0]))
     return coords
+
+def get_edge_coords(image_array, lower = 100, upper = 200):
+    '''
+    Use edge detection to find image edges, and return coords
+
+    Parameters: 
+        image_array (numpy array) - pixels from image
+        lower (int) - lower hysteresis threshold. Optional - default 100
+        upper (int) - upper hysteresis threshold. Optional - defaul 200
+
+    Returns: 
+        coords (numpy array: shape (n,2) - edge coordinates
+    '''
+    
+    edges = cv2.Canny(image_array,lower,upper)
+    dark_i = np.where(edges>0) #should only be 255 or 0
+
+    coords = np.column_stack((dark_i[1], -dark_i[0]))
+
+    return coords
+
 
 def return_reduced_points(coords, plot_original = False, number_of_points = None, exact_number = True):
     '''
@@ -63,7 +93,7 @@ def return_reduced_points(coords, plot_original = False, number_of_points = None
        exact_number (bool) default True - exact number required? If false will just try and reduce by multiples
 
     Returns: 
-        coord_strip (list) - thinned list of coords
+        coord_strip (numpy array: shape (n,2)) - thinned list of coords
     '''    
     
     if plot_original:    
@@ -80,13 +110,13 @@ def return_reduced_points(coords, plot_original = False, number_of_points = None
     coord_strip = coords[::step_size]
     if exact_number:
         while len(coord_strip) > number_of_points:
-            coord_strip.remove(choice(coord_strip))
+            coord_strip = np.delete(coord_strip, choice(range(len(coord_strip))), axis = 0)
     print('Original number of points: {0:,}\nNew number of points: {1:,}'.format(len(coords), len(coord_strip)))
     
     return coord_strip
 
 
-def get_coords_from_url_image(url, number_points = None, colour_threshold = 0):
+def get_coords_from_url_image(url, number_points = None, colour_threshold = None, ratio = None, lower_edge = 100, upper_edge = 200):
     '''
     Take an image url and give a thinned number of coordinates of black pixels
 
@@ -99,18 +129,19 @@ def get_coords_from_url_image(url, number_points = None, colour_threshold = 0):
         points_reduced (list) - thinned list of coords
     '''    
     R = read_array_from_image_url(url)
-    points = select_pixels(R, threshold = colour_threshold)
+    points = get_edge_coords(R, lower = lower_edge, upper = upper_edge)
+    #points = select_dark_pixels(R, threshold = colour_threshold, ratio = ratio)
     points_reduced = return_reduced_points(points, number_of_points = number_points)
     
     return points_reduced
 
 if __name__ == '__main__':
     
-    url = r'https://i.pinimg.com/originals/6a/ea/63/6aea63e74b246450eab8a90d38d2bb5b.jpg'
+    url = r'https://vignette.wikia.nocookie.net/sonic/images/2/2d/TSR_Sonic.png/revision/latest/top-crop/width/360/height/360?cb=20191020043348'
     
-    #points = get_coords_from_url_image(url, number_points = 5000)
-
-    R = read_array_from_image_url(url)
+    points = get_coords_from_url_image(url, number_points = 5000)
+    
     plt.axes().set_aspect('equal', 'datalim')
     plt.plot([i[0] for i in points], [i[1] for i in points],'o',markersize=0.2,color = 'k')
     plt.show()
+
